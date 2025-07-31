@@ -11,6 +11,7 @@ import tiktoken
 
 from .adapters import get_tokenizer
 from .common import FIXTURES_PATH, gpt2_bytes_to_unicode
+from pdb import set_trace as T
 
 VOCAB_PATH = FIXTURES_PATH / "gpt2_vocab.json"
 MERGES_PATH = FIXTURES_PATH / "gpt2_merges.txt"
@@ -84,7 +85,6 @@ def test_roundtrip_empty():
     decoded_string = tokenizer.decode(encoded_ids)
     assert test_string == decoded_string
 
-
 def test_empty_matches_tiktoken():
     reference_tokenizer = tiktoken.get_encoding("gpt2")
     tokenizer = get_tokenizer_from_vocab_merges_path(
@@ -102,7 +102,6 @@ def test_empty_matches_tiktoken():
 
     assert tokenizer.decode(ids) == test_string
     assert reference_tokenizer.decode(reference_ids) == test_string
-
 
 def test_roundtrip_single_character():
     tokenizer = get_tokenizer_from_vocab_merges_path(
@@ -159,7 +158,6 @@ def test_single_unicode_character_matches_tiktoken():
 
     assert tokenizer.decode(ids) == test_string
     assert reference_tokenizer.decode(reference_ids) == test_string
-
 
 def test_roundtrip_ascii_string():
     tokenizer = get_tokenizer_from_vocab_merges_path(
@@ -444,7 +442,6 @@ def test_encode_memory_usage():
     with open(FIXTURES_PATH / "tinystories_sample_5M.txt") as f:
         contents = f.read()
         _ = _encode(tokenizer, contents)
-
 
 @memory_limit(int(1e6))
 def _encode_iterable(tokenizer, iterable):

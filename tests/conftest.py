@@ -2,11 +2,17 @@ from typing import TypeVar
 import numpy as np
 import pytest
 import os
+import sys
+sys.path.insert(0,'./cs336_basics/')
+from logger import setup_logger
 from pathlib import Path
 import torch
 from torch import Tensor
 import pickle
+from pdb import set_trace as T
 
+
+logger = setup_logger("test_merge", "logs/test_special2.log")
 
 _A = TypeVar("_A", np.ndarray, Tensor)
 
@@ -61,6 +67,7 @@ class NumpySnapshot:
         
         # Verify all expected arrays are present
         missing_keys = set(arrays_dict.keys()) - set(expected_arrays.keys())
+
         if missing_keys:
             raise AssertionError(f"Keys {missing_keys} not found in snapshot for {test_name}")
         
@@ -114,9 +121,30 @@ class Snapshot:
         
         if isinstance(actual, dict):
             for key in actual: 
-                if key not in expected_data:
+                if key not in expected_data: # dict({'vocab_keys', 'vocab_values', 'merges'})
                     raise AssertionError(f"Key '{key}' not found in snapshot for {test_name}")
+
+                '''
+                # debug info
+                logger.debug("====================================================")
+                logger.debug(f"logging {key}")
+                logger.debug(f"my result")
+                logger.debug(actual[key])
+                
+                logger.debug(f"expected")
+                logger.debug(expected_data[key])
+
+                logger.debug(f"difference")
+                tmp = set(actual[key]).difference(set(expected_data[key]))
+                logger.debug(tmp)
+
+                logger.debug("====================================================")
+
+                #=============================================
+                '''
+
                 assert actual[key] == expected_data[key], f"Data for key '{key}' does not match snapshot for {test_name}"
+
         else:
             assert actual == expected_data, f"Data does not match snapshot for {test_name}"
         

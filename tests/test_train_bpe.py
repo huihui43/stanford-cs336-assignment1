@@ -1,9 +1,13 @@
 import json
 import time
-
+import sys
+sys.path.insert(0, "./cs336_basics")
+from logger import setup_logger
 from .adapters import run_train_bpe
 from .common import FIXTURES_PATH, gpt2_bytes_to_unicode
+from pdb import set_trace as T
 
+logger = setup_logger("test_merge", "./logs/test_merge_new.log")
 
 def test_train_bpe_speed():
     """
@@ -22,7 +26,6 @@ def test_train_bpe_speed():
     )
     end_time = time.time()
     assert end_time - start_time < 1.5
-
 
 def test_train_bpe():
     input_path = FIXTURES_PATH / "corpus.en"
@@ -47,6 +50,29 @@ def test_train_bpe():
             )
             for merge_token_1, merge_token_2 in gpt2_reference_merges
         ]
+
+    '''
+    #==============================================================
+    # debug
+    tmp = set(merges).difference(set(reference_merges))
+    logger.info("====================================================")
+    logger.info(f"{len(tmp)} in merge not in reference merges")
+    logger.info(tmp)
+    logger.info("====================================================")
+
+
+    logger.info("====================================================")
+    logger.info("My merge")
+    logger.info(merges)
+    logger.info("====================================================")
+    
+    logger.info("====================================================")
+    logger.info("Reference merge")
+    logger.info(reference_merges)
+    logger.info("====================================================")
+    #==============================================================
+    '''
+
     assert merges == reference_merges
 
     # Compare the vocab to the expected output vocab
@@ -56,11 +82,11 @@ def test_train_bpe():
             gpt2_vocab_index: bytes([gpt2_byte_decoder[token] for token in gpt2_vocab_item])
             for gpt2_vocab_item, gpt2_vocab_index in gpt2_reference_vocab.items()
         }
+    
     # Rather than checking that the vocabs exactly match (since they could
     # have been constructed differently, we'll make sure that the vocab keys and values match)
     assert set(vocab.keys()) == set(reference_vocab.keys())
     assert set(vocab.values()) == set(reference_vocab.values())
-
 
 def test_train_bpe_special_tokens(snapshot):
     """
@@ -78,7 +104,6 @@ def test_train_bpe_special_tokens(snapshot):
     vocabs_without_specials = [word for word in vocab.values() if word != b"<|endoftext|>"]
     for word_bytes in vocabs_without_specials:
         assert b"<|" not in word_bytes
-
     snapshot.assert_match(
         {
             "vocab_keys": set(vocab.keys()),
@@ -86,3 +111,4 @@ def test_train_bpe_special_tokens(snapshot):
             "merges": merges,
         },
     )
+
