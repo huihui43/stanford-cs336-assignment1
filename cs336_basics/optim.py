@@ -17,13 +17,41 @@ def cross_entropy_loss(preds, targets):
     Returns:
         Float[Tensor, ""]: The average cross-entropy loss across examples.
     """
-
     B = preds.shape[0]
-    maxval = torch.max(preds, dim=1, keepdim=True).values 
-    rows = torch.arange(B) 
-    res = torch.log(torch.sum(torch.exp(preds - maxval), dim=1)) + maxval - preds[rows, targets]
-
+    maxval = torch.max(preds, dim=1, keepdim=False).values 
+    rows = [i for i in range(B)]
+    cols = [ele.item() for ele in targets]
+    res = torch.log(torch.sum(torch.exp(preds - maxval.unsqueeze(-1)), dim=1)) + maxval - preds[rows, cols]
     return torch.mean(res)
+
+# compute cross_entropy
+def CELoss_and_Perplexity(preds, targets, context_length):
+    """Given a tensor of inputs and targets, compute the perplexity 
+    
+    Args:
+        inputs (Float[Tensor, "batch_size vocab_size"]): inputs[i][j] is the
+            unnormalized logit of jth class for the ith example.
+        targets (Int[Tensor, "seq_len"]): Tensor of shape (seq_len,) with the index of the correct class.
+            Each value must be between 0 and `num_classes - 1`.
+
+    Returns:
+        Float[Tensor, ""]: The average cross-entropy loss across examples.
+    """
+    B = preds.shape[0]
+    bs = B // context_length
+    maxval = torch.max(preds, dim=1, keepdim=False).values 
+    rows = [i for i in range(B)]
+    cols = [ele.item() for ele in targets]
+    neg_log = torch.log(torch.sum(torch.exp(preds - maxval.unsqueeze(-1)), dim=1)) + maxval - preds[rows, cols]
+    celoss = torch.mean(neg_log)
+    
+    neg_log = neg_log.reshape(-1, context_length)
+    perplexity = torch.mean(torch.exp(torch.mean(neg_log,dim=1)))# avg per sentence
+
+    return celoss, perplexity
+
+
+
 
 class SGD(torch.optim.Optimizer):
     def __init__(self, params, lr=1e-3):
@@ -52,7 +80,12 @@ class SGD(torch.optim.Optimizer):
 
 
 class AdamW(torch.optim.Optimizer):
-    def __init__(self, params, lr, betas , weight_decay, eps=10e-8):
+    def __init__(self, 
+                 params, 
+                 lr, 
+                 betas, 
+                 weight_decay, 
+                 eps=10e-8):
         """
         lr: learning rate
         b1, b2: params to control moment estimates
@@ -107,6 +140,12 @@ class AdamW(torch.optim.Optimizer):
                 state['v'] = v
                 
         return loss
+    
+    def set_lr(self, new_lr):
+        for group in self.param_groups:
+            group['lr'] = new_lr
+    
+
 
 def cosine_annealing_scheduler(t, a_max, a_min, tw, tc):
 
@@ -140,7 +179,8 @@ def cosine_annealing_scheduler(t, a_max, a_min, tw, tc):
     return lr
 
 
-def gradient_clipping(params: Iterable[torch.nn.Parameter], max_l2_norm:float):
+def gradient_clipping(params: Iterable[torch.nn.Parameter], 
+                      max_l2_norm:float):
     
     for p in params:
         if p.grad is None:
@@ -161,7 +201,7 @@ if __name__ == '__main__':
 
     weights = torch.nn.Parameter(5 * torch.randn((10,10)))
     #opt = SGD([weights], lr=1)
-    opt = AdamW([weights], lr=1e-3, b1=0.9, b2=0.999, mu=0.01)
+    opt = AdamW([weights], lr=1e-3, betas=(0.9, 0.999), weight_decay=0.01)
 
     for t in range(100):
         opt.zero_grad()
@@ -169,3 +209,4 @@ if __name__ == '__main__':
         print(loss.cpu().item())
         loss.backward() # compute grad
         opt.step()
+        T()

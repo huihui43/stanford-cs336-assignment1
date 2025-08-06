@@ -119,7 +119,6 @@ def test_transformer_lm(
     numpy_snapshot, vocab_size, n_keys, d_model, n_layers, n_heads, d_ff, theta, ts_state_dict, in_indices
 ):
     state_dict, _ = ts_state_dict
-
     actual_output = run_transformer_lm(
         vocab_size=vocab_size,
         context_length=n_keys,

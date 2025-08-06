@@ -1,4 +1,5 @@
 # accelerate bpe_trainer with multiprocessing
+# not in use 
 from __future__ import annotations
 
 import time
@@ -13,7 +14,7 @@ import cProfile
 from pretokenizer import pretokenizer
 from typing import BinaryIO
 from collections import defaultdict
-from logger import setup_logger
+from cs336_basics.helper import setup_logger
 from pdb import set_trace as T
 
 

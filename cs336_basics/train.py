@@ -1,219 +1,145 @@
 import torch
 import os
-import sys
-import datetime
+import time
 import random
 import numpy as np
+from cs336_basics.helper import setup_logger, profile
 import argparse
+from tqdm import trange
 from configs import build_config
 
 from module import Transformer_LM
-from optim import AdamW, cosine_annealing_scheduler, gradient_clipping, cross_entropy_loss
-from dataloader import data_loading, load_checkpoint, save_checkpoint
+from optim import AdamW, cosine_annealing_scheduler, gradient_clipping, cross_entropy_loss, CELoss_and_Perplexity
+from dataloader import data_loading, data_loading_sequence, load_checkpoint, save_checkpoint
+import wandb
 
-
-from models.loss import build_criterion
-from data.fastmri import build_dataset
-from torch.utils.data import DataLoader, DistributedSampler
-from pathlib import Path
-from engine import train_one_epoch, evaluate, distributed_evaluate, do_vis
-from util.misc import init_distributed_mode, get_rank, save_on_master
 from pdb import set_trace as T
 
-
-# train for one epoch
-def train_one_epoch(
-    model: torch.nn.Module,
-    optimizer: torch.optim.Optimizer, 
-    loss_func: torch.nn.Module,
-    dataLoader: function, 
-    epoch: int):
+def validate(model, valid_tokens, vocab_size, batch_size, context_length, device):
+    print("start validating")
+    model.eval()
+    num_tokens = valid_tokens.shape[0] 
+    interval = batch_size * context_length
+    valid_loss = []
+    valid_perplexity = []
+    num_steps = num_tokens // interval
     
+    for i in trange(0, num_steps):
+        X, y = data_loading_sequence(valid_tokens, i*interval, batch_size, context_length, device) # load one sample
+        y = y.view(-1)
+        preds = model(X)
+        batch_valid_loss, batch_valid_perplexity = CELoss_and_Perplexity(preds.view(-1, vocab_size), y, context_length)
+        
+        valid_loss.append(batch_valid_loss.item())
+        valid_perplexity.append(batch_valid_perplexity.item())
+
     model.train()
-
-    metric_logger = utils.MetricLogger(delimiter="  ")
-    metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
-    header = 'Epoch: [{}]'.format(epoch)
-
-    for data in metric_logger.log_every(data_loader, print_freq, header):
-
-        pd, pdfs, _ = data
-        target = pdfs[1]
-
-        pd_img = pd[1].unsqueeze(1) # target
-        pdfs_img = pdfs[0].unsqueeze(1) # zf
-        target = target.unsqueeze(1)
-
-        pd_img = pd_img.to(device)
-        pdfs_img = pdfs_img.to(device)
-        target = target.to(device)
-
-        if args.USE_MULTI_MODEL and args.USE_CL1_LOSS:
-            outputs, complement = model(pdfs_img, pd_img)
-            loss = criterion(outputs, target, complement, pd_img)
-        elif args.USE_MULTI_MODEL:
-            outputs = model(pdfs_img, pd_img)
-            loss = criterion(outputs, target)
-        else:
-            outputs = model(pdfs_img)
-            loss = criterion(outputs, target)
-
-        optimizer.zero_grad()
-        loss['loss'].backward()
-        optimizer.step()
-
-        metric_logger.update(loss=loss['loss'])
-        metric_logger.update(l1_loss=loss['l1_loss'])
-        if args.USE_CL1_LOSS:
-            metric_logger.update(cl1_loss = loss['cl1_loss'])
-        metric_logger.update(lr=optimizer.param_groups[0]["lr"])
-
-    global_step = int(epoch * len(data_loader) + len(data_loader))
-    for key, meter in metric_logger.meters.items():
-        writer.add_scalar("train/%s" % key, meter.global_avg)
-
-    return {"loss": metric_logger.meters['loss'].global_avg, "global_step": global_step}
+    print("finish validating")
+    return np.mean(valid_loss), np.mean(valid_perplexity)
 
 
+def train(args):
 
-def main(args):
-    
+    # start wandb
+    run = wandb.init(
+        project='cs336_assignment1',
+        config={
+            "lr":args.lr,
+            "architecture":args.model_name,
+            "dataset":args.dataset_name,
+            "epochs":args.epochs,
+            "seed":args.seed,
+        },
+    )
+    table = wandb.Table(columns=["Time", "Epoch", "Iteration", "Loss"])
+
     # set seed
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
     random.seed(args.seed)
 
+    # check model save root
+    if not os.path.exists(args.model_save_path):
+        os.makedirs(args.model_save_path, exist_ok=True)
+    
+    # logger
+    logger = setup_logger('train', log_file=os.path.join(args.model_save_path, 'train.log'))
+
     # build model, optimizer
-    model = Transformer_LM(args.vocab_size,args.context_length,args.d_model,args.num_layers,args.num_heads,args.d_ff,args.rope_theta)
-    optim = AdamW([model.parameters], args.lr, args.betas, args.weight_decay, eps=args.eps)
+    model = Transformer_LM(args.vocab_size,args.context_length,args.d_model,
+                           args.num_layers,args.num_heads,args.d_ff,
+                           args.rope_theta, device=args.device, dtype=torch.float32)
+    optim = AdamW(model.parameters(), args.lr, args.betas, args.weight_decay, eps=args.eps)
+    
+    # send to device
+    model.to(args.device)
+    
     if len(args.resume):
         curr_iteration = load_checkpoint(args.resume, model, optim)
-
+    else:
+        curr_iteration = -1
 
     # read input file
-    input_text = np.memmap(args.train_text_path, mode='r')
+    all_train_tokens = np.load(args.train_text_path, mmap_mode='r') # 1d np array
+    all_valid_tokens = np.load(args.valid_text_path, mmap_mode='r') # 1d np array
+    
+    num_batches = int(args.total_tokens_processed / (args.batch_size * args.context_length))
+
+    global_step_cnt = 0 
+    for i in range(args.epochs):
+
+        epoch_loss = 0.
+        if i < curr_iteration: # skip
+            continue 
+        for j in trange(num_batches):
+            t1 = time.time()
+            optim.zero_grad() 
+            X, y = data_loading(all_train_tokens, args.batch_size, args.context_length, args.device)
+            y = y.view(-1)
+            y_pred = model(X) # (B, l, vocab_size)
+            loss = cross_entropy_loss(y_pred.view(-1, args.vocab_size), y)
+            loss.backward() # compute gradient
+            gradient_clipping(model.parameters(), args.max_l2_norm) # gradient clipping
+
+            optim.step()
+            global_step_cnt += 1
+
+            new_lr = cosine_annealing_scheduler(global_step_cnt, args.max_lr, args.min_lr, args.warmup_steps, args.cosine_steps)
+            optim.set_lr(new_lr)
+
+            epoch_loss += loss.cpu().item()
+            run.log({"Avg loss per token": epoch_loss/(j+1), "lr":new_lr})
+            logger.info(f"Epoch: {i}/{args.epochs} | Step: {j}/{num_batches} | Time: {(time.time()-t1):.2f} | lr: {new_lr:.4e} | Average Loss (per token): {(epoch_loss / (j+1)):.4f}")
+
+            # save model
+            if global_step_cnt % args.save_per_step == 0:
+                save_checkpoint(model, optim, i, os.path.join(args.model_save_path, f'ckpt_{global_step_cnt}.pkl'))
+                # validate
+                with torch.no_grad():
+                    valid_loss, valid_perplexity = validate(model, all_valid_tokens,args.vocab_size,args.batch_size, args.context_length, args.device)
+                    run.log({"valid loss per token": valid_loss, "valid perplexity per sample":valid_perplexity})
+                    logger.info(f"Valid loss per token: {valid_loss}, Valid perplexity per sample: {valid_perplexity}")
+
+
+    # save final model
+    save_checkpoint(model, optim, i, os.path.join(args.model_save_path, f'ckpt_epoch_{i}.pkl'))
 
 
 
 
-
-    # build dataset
-    dataset_train = build_dataset(args, mode='train')
-    dataset_val = build_dataset(args, mode='val')
-
-    dataset_val_len = len(dataset_val)
-
-    if args.distributed:
-        sampler_train = DistributedSampler(dataset_train)
-        sampler_val = DistributedSampler(dataset_val, shuffle=False)
-    else:
-        sampler_train = torch.utils.data.RandomSampler(dataset_train)
-        sampler_val = torch.utils.data.SequentialSampler(dataset_val)
-
-    batch_sampler_train = torch.utils.data.BatchSampler(
-        sampler_train, args.SOLVER.BATCH_SIZE, drop_last=True)
-
-    dataloader_train = DataLoader(dataset_train, batch_sampler=batch_sampler_train,
-                                  num_workers=args.SOLVER.NUM_WORKERS, pin_memory=True)
-    dataloader_val = DataLoader(dataset_val, batch_size=args.SOLVER.BATCH_SIZE,
-                                sampler=sampler_val, num_workers=args.SOLVER.NUM_WORKERS,
-                                pin_memory=True)
-
-    if args.RESUME != '':
-        checkpoint = torch.load(args.RESUME)
-        checkpoint = checkpoint['model']
-        checkpoint = {key.replace("module.", ""): val for key, val in checkpoint.items()}
-        print('resume from %s' % args.RESUME)
-        model.load_state_dict(checkpoint, strict=False)
-
-
-    start_time = time.time()
-
-    best_status = {'NMSE': 10000000, 'PSNR': 0, 'SSIM': 0}
-
-    best_checkpoint = None
-    for epoch in range(start_epoch, args.TRAIN.EPOCHS):
-        train_status = train_one_epoch(args,
-            model, criterion, dataloader_train, optimizer, epoch, args.SOLVER.PRINT_FREQ, device)
-        lr_scheduler.step()
-
-        if args.distributed:
-            eval_status = distributed_evaluate(args, model, criterion, dataloader_val, device, dataset_val_len)
-        else:
-            eval_status = evaluate(args, model, criterion, dataloader_val, device)
-
-        if eval_status['PSNR']>best_status['PSNR']:
-            best_status = eval_status
-            if args.distributed:
-                best_checkpoint = {
-                    'model': model.module.state_dict(),
-                    'optimizer': optimizer.state_dict(),
-                    'lr_scheduler': lr_scheduler.state_dict(),
-                    'epoch': epoch,
-                    'args': args,
-                }
-            else:
-                best_checkpoint = {
-                    'model': model.state_dict(),
-                    'optimizer': optimizer.state_dict(),
-                    'lr_scheduler': lr_scheduler.state_dict(),
-                    'epoch': epoch,
-                    'args': args,
-                }
-
-        # save model
-        if args.OUTPUTDIR:
-            Path(args.OUTPUTDIR).mkdir(parents=True, exist_ok=True)
-            checkpoint_path = os.path.join(args.OUTPUTDIR, f'checkpoint{epoch:04}.pth')
-            
-            if args.distributed:
-                save_on_master({
-                    'model': model.module.state_dict(),
-                    'optimizer': optimizer.state_dict(),
-                    'lr_scheduler': lr_scheduler.state_dict(),
-                    'epoch': epoch,
-                    'args': args,
-                }, checkpoint_path)
-            else:
-                torch.save({
-                    'model': model.state_dict(),
-                    'optimizer': optimizer.state_dict(),
-                    'lr_scheduler': lr_scheduler.state_dict(),
-                    'epoch': epoch,
-                    'args': args,
-                }, checkpoint_path)
-
-    print('The best epoch is ', best_checkpoint['epoch'])
-    print("Results ----------")
-    print("NMSE: {:.4}".format(best_status['NMSE']))
-    print("PSNR: {:.4}".format(best_status['PSNR']))
-    print("SSIM: {:.4}".format(best_status['SSIM']))
-    print("------------------")
-    if args.OUTPUTDIR:
-        checkpoint_path = os.path.join(args.OUTPUTDIR, 'best.pth')
-
-        if args.distributed:
-            save_on_master(best_checkpoint, checkpoint_path)
-        else:
-            torch.save(best_checkpoint, checkpoint_path)
-
-    total_time = time.time() - start_time
-    total_time_str = str(datetime.timedelta(seconds=int(total_time)))
-    print('Training time {}'.format(total_time_str))
 
 
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description="LLM Training")
-    parser.add_argument("--local_rank", type=int)
-    parser.add_argument(
-        "--experiment", default="exp", help="choose a experiment to do")
+    parser.add_argument("--exp", help="choose a experiment to do")
     args = parser.parse_args()
+    args.exp = 'gpt2_small'
 
-    print('doing ', args.experiment)
+    print('doing ', args.exp)
 
-    cfg = build_config(args.experiment)
+    cfg = build_config(args.exp)
 
     print(cfg)
 
-    main(cfg, args.experiment)
+    train(cfg)

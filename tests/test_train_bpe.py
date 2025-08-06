@@ -2,12 +2,10 @@ import json
 import time
 import sys
 sys.path.insert(0, "./cs336_basics")
-from logger import setup_logger
 from .adapters import run_train_bpe
 from .common import FIXTURES_PATH, gpt2_bytes_to_unicode
 from pdb import set_trace as T
 
-logger = setup_logger("test_merge", "./logs/test_merge_new.log")
 
 def test_train_bpe_speed():
     """
@@ -51,27 +49,6 @@ def test_train_bpe():
             for merge_token_1, merge_token_2 in gpt2_reference_merges
         ]
 
-    '''
-    #==============================================================
-    # debug
-    tmp = set(merges).difference(set(reference_merges))
-    logger.info("====================================================")
-    logger.info(f"{len(tmp)} in merge not in reference merges")
-    logger.info(tmp)
-    logger.info("====================================================")
-
-
-    logger.info("====================================================")
-    logger.info("My merge")
-    logger.info(merges)
-    logger.info("====================================================")
-    
-    logger.info("====================================================")
-    logger.info("Reference merge")
-    logger.info(reference_merges)
-    logger.info("====================================================")
-    #==============================================================
-    '''
 
     assert merges == reference_merges
 

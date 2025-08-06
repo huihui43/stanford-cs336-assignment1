@@ -1,10 +1,7 @@
 import math
 import torch
 import torch.nn as nn
-import einops
-import time
 from einops import rearrange, einsum, reduce, repeat
-import numpy as np
 
 from pdb import set_trace as T
 
@@ -39,6 +36,8 @@ class Embedding(nn.Module):
         super().__init__()
         self.num_embeddins = num_embeddings
         self.embedding_dim = embedding_dim
+        self.device = device
+        self.dtype = dtype
 
         data = torch.empty(num_embeddings, embedding_dim, device=device, dtype=dtype)
         nn.init.trunc_normal_(data, 0,1,-3,3)
@@ -49,32 +48,11 @@ class Embedding(nn.Module):
         torch_ids: (batch, sequence_length) 
         return (batch, sequence_length, d_model)
         """
-        res = []
-        b, l = token_ids.shape
-        res = torch.empty(b, l, self.embedding_dim)
-        for bid in range(b):
-            for lid in range(l):
-                val = token_ids[bid, lid]
-                res[bid, lid, :] = self.weight[val,:]
-
-        return res
-
-        '''
-        # TODO too slow, may be can be faster?
-        masks = []
-        b, l = token_ids.shape
-        for bid in range(b):
-            mask = torch.zeros((l, self.num_embeddins))
-            mask[np.arange(l), token_ids[bid]] = 1
-            masks.append(mask)
-
-        full_mask = rearrange(masks, "batch seqlen vocab_size -> batch seqlen vocab_size")
-        res = einsum(full_mask, self.embedding, " batch seqlen vocab_size, vocab_size d_model  -> batch seqlen d_model")
         
-        print(f"finish embeding, use time : {time.time() - t1}")
+        b, _ = token_ids.shape
+        token_ids = token_ids.reshape(-1).to(torch.int)
+        return rearrange(self.weight[token_ids], '(b l) d_model->b l d_model',b=b)
 
-        return res
-        '''
 
 class RMSNorm(nn.Module):
     def __init__(self, 
@@ -86,7 +64,7 @@ class RMSNorm(nn.Module):
 
         self.d_model = d_model
         self.eps = eps
-        data = torch.empty(d_model, device=device, dtype=dtype)
+        data = torch.ones(d_model, device=device, dtype=dtype)
         self.weight= nn.Parameter(data)
 
     def forward(self, x:torch.Tensor)->torch.Tensor:
@@ -170,34 +148,35 @@ class RotaryPositionalEmbedding(nn.Module):
 
         mask = torch.ones(d_k)
         mask[::2] = -1
+        mask.to(device)
 
         self.register_buffer("cos_data", cos_data, persistent=False)
         self.register_buffer("sin_data", sin_data, persistent=False)
         self.register_buffer("mask",mask, persistent=False)
-    
+
+    def rotate_vector(self, x):
+        x1 = rearrange(x, '... (n p)->... p n', p = 2)
+        x1 = x1.flip(-2)
+        return rearrange(x1, '... p n -> ... (n p)') #[x2, x1, x4, x3, ...]
+
     def forward(self, x, token_positions)->torch.Tensor:
         """
         x: (..., seq_len, d_k) 
-        token_positions: (batch_size,seq_len)
+        token_positions: (...,seq_len)
         """
+        '''
         if len(token_positions.shape) > 1:
             token_positions = token_positions[0] # use the same token position for all batches
+        '''
 
-        # slicing
-        x1 = x[::,token_positions,:] # (..., seq_len, d_k)
-        cos_data_repeat = repeat(self.cos_data[token_positions,:],'seq_len block_num->seq_len (block_num 2)')
-        sin_data_repeat = repeat(self.sin_data[token_positions,:],'seq_len block_num->seq_len (block_num 2)')
+        cos_data_repeat = repeat(self.cos_data[token_positions],'seq_len block_num->seq_len (block_num 2)')
+        sin_data_repeat = repeat(self.sin_data[token_positions],'seq_len block_num->seq_len (block_num 2)')
 
-        # rearange x1
-        x2 = rearrange(x1, '... (n p)->... p n', p = 2)
-        x2 = x2.flip(-2)
-        x2 = rearrange(x2, '... p n -> ... (n p)')
-        x2 = x2 * self.mask # [-x2, x1, -x4, x3, ...]
+        # rotate x
+        x1 = self.rotate_vector(x) * self.mask 
 
-        res = x1 * cos_data_repeat + x2 * sin_data_repeat
+        return x * cos_data_repeat + x1 * sin_data_repeat
         
-        x[::,token_positions,:] = res
-        return x
 
        
 
@@ -206,9 +185,8 @@ def softmax(x:torch.tensor, i: int):
     # find max
     maxval = torch.max(x, dim=i, keepdim=True).values
     x1 = torch.exp(x - maxval)
-    sum1 = torch.sum(x1, dim=i, keepdim=True)
+    return x1 / torch.sum(x1, dim=i, keepdim=True)
 
-    return x1 / sum1
 
 
 def scaled_dot_product_attention(q, k, v, mask=None):
@@ -247,6 +225,7 @@ class Multihead_Self_Attention(nn.Module):
         # generate mask
         seq_len = x.shape[-2]
         mask = torch.triu(torch.ones(seq_len, seq_len)).T
+        mask = mask.to(x.device)
         mask = mask.to(torch.bool)
 
         # project
@@ -312,14 +291,11 @@ class TransformerBlock(nn.Module):
         self.ln2 = RMSNorm(d_model=d_model, device=device, dtype=dtype)
         self.ffn = SwiGLU_FFN(d_in=d_model, d_ff=d_ff, device=device, dtype=dtype)
         self.attn = Multihead_Self_Attention(d_model=d_model,num_heads=num_heads, device=device,dtype=dtype)
-
+    
     def forward(self, x, token_positions=None, rope_layer=None):
         """
         x: (B, l, d_model)
         """
-        if token_positions is None:
-            token_positions = torch.arange(x.shape[1])
-
         x = x + self.attn(self.ln1(x), 
                          rope_layer=rope_layer, 
                          token_positions=token_positions)
@@ -336,7 +312,6 @@ class TransformerBlock(nn.Module):
         flops += val
         return flops
 
-
 class Transformer_LM(nn.Module):
 
     def __init__(self, 
@@ -351,10 +326,8 @@ class Transformer_LM(nn.Module):
 
         super().__init__()
 
-        if 'device' not in kwargs:
-            device = None 
-        if 'dtype' not in kwargs:
-            dtype= None 
+        device = kwargs.get('device', None) 
+        dtype = kwargs.get('dtype', None) 
 
         self.context_length = context_length
         self.num_layers = num_layers
@@ -375,9 +348,10 @@ class Transformer_LM(nn.Module):
         x: (b, l) 
         """
         x = self.token_embeddings(x)
+        token_positions = torch.arange(x.shape[1]).to(x.device)
 
         for layer in self.layers:
-            x = layer(x, rope_layer = self.rope_layer)
+            x = layer(x, token_positions = token_positions, rope_layer = self.rope_layer)
 
         x = self.ln_final(x) # (B, l, d_model)
         x = self.lm_head(x) # (B, l, vocab_size)
@@ -399,8 +373,29 @@ class Transformer_LM(nn.Module):
 
 
 if __name__ == '__main__':
-    layer = RotaryPositionalEmbedding(0.5, 8, 12) # d_k=8, seq_len=12
-    x = torch.rand(1, 12, 8)
-    token_pos = torch.tensor([i for i in range(12)])
-    y = layer(x, token_pos)
+
+    '''
+    model = Transformer_LM(
+        vocab_size=10000,
+        context_length=256,
+        d_model=512,
+        num_layers=4,
+        num_heads=16,
+        d_ff=1344,
+        rope_theta=10000
+    )
+
+    input = torch.randint(low=0, high=10000, size=(1, 256,))
+    y = model(input)
     print(y.shape)
+    '''
+    import time
+    t1 = time.time()
+    x = torch.randint(0, 100, size=(10,1000))
+    #layer = RotaryPositionalEmbedding(10000, 256, 200)
+    #layer = new_RoPE(10000, 256, 200)
+    layer = Embedding(100, 256)
+    for _ in range(10):
+        layer(x)
+
+    print(f"use time {(time.time() - t1)/10}")

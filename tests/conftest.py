@@ -4,7 +4,6 @@ import pytest
 import os
 import sys
 sys.path.insert(0,'./cs336_basics/')
-from logger import setup_logger
 from pathlib import Path
 import torch
 from torch import Tensor
@@ -12,7 +11,6 @@ import pickle
 from pdb import set_trace as T
 
 
-logger = setup_logger("test_merge", "logs/test_special2.log")
 class DEFAULT:
     pass
 

@@ -4,50 +4,20 @@
 
 from __future__ import annotations
 
+import os
 import multiprocessing as mp
 from multiprocessing import Pool
 from tqdm import tqdm
 from linkedlist import LinkedList
 import time
 
-import os
-from io import StringIO
-import pstats
-import regex as re
-import cProfile
 from pretokenizer import pretokenizer
 from collections import defaultdict, Counter
-from logger import setup_logger
+from cs336_basics.helper import setup_logger
 from pdb import set_trace as T
 
 # ===============================
 # debug helper function
-
-def profile(func):
-    def wrapper(*args, **kwargs):
-        pr = cProfile.Profile()
-        pr.enable()
-        result = func(*args, **kwargs)
-        pr.disable()
-        
-        s = StringIO()
-        ps = pstats.Stats(pr, stream=s).strip_dirs()
-        ps.sort_stats('cumulative')
-        ps.print_stats(10)
-        
-        print(f"Profile for {func.__name__}:\n{s.getvalue()}")
-        return result
-    return wrapper
-
-def timer_decorator(func):
-    def wrapper(*args, **kwargs):
-        start_time = time.time()  # 记录开始时间
-        result = func(*args, **kwargs)  # 执行原函数
-        end_time = time.time()  # 记录结束时间
-        execution_time = end_time - start_time  # 计算执行时间
-        print(f"函数 {func.__name__} 运行时间: {execution_time:.4f} 秒")
-        return result  # 返回原函数的返回值
-    return wrapper
 
 # ===============================
 
@@ -291,8 +261,6 @@ def trainer(
     """
     main function
     """
-
-
 
     if 'num_chunks' not in kwargs:
         num_chunks = 1024 

@@ -1,4 +1,5 @@
 from yacs.config import CfgNode as CN
+import torch
 
 # config definition
 _C = CN()
@@ -7,24 +8,44 @@ _C.seed = 42
 _C.device='cuda:0'
 
 # input file path
-_C.train_text_path = ""
+_C.train_text_path = "/home/huihui43/project/stanford-cs336-assignment1/data/exp/tinystories_tokens_train.npy"
+_C.valid_text_path = "/home/huihui43/project/stanford-cs336-assignment1/data/exp/tinystories_tokens_valid.npy"
+
+# info
+_C.model_name = 'gpt2_small'
+
+# tokenizer path
+_C.dataset_name = 'tinystories'
+_C.vocab_filepath = '/home/huihui43/project/stanford-cs336-assignment1/result/tokenizer/tinystories/tinystories_vocab.pkl'
+_C.merges_filepath = '/home/huihui43/project/stanford-cs336-assignment1/result/tokenizer/tinystories/tinystories_merges.pkl'
 
 # model param
-_C.vocab_size = 50257
-_C.context_length = 1024
-_C.d_model = 768
-_C.num_layers = 12
-_C.num_heads = 12
-_C.d_ff = 6400
+_C.vocab_size = 10000
+_C.context_length = 256
+_C.d_model = 512
+_C.num_layers = 4
+_C.num_heads = 16
+_C.d_ff = 1344
 _C.rope_theta=10000
 
 # optimizer
-_C.lr=1e-3
+_C.lr=1e-5
 _C.betas=(0.9,0.95)
 _C.weight_decay=0.01
 _C.eps = 1e-7
+_C.max_l2_norm = 1.0
+
+# scheduler
+_C.max_lr = 2e-5
+_C.min_lr = 1e-6
+_C.warmup_steps = 100
+_C.cosine_steps = 1000
 
 # training setting
 _C.resume = ""
 _C.model_save_path = './result/train/gpt2_small_exp1'  # the model output dir
-_C.epochs = 50 # the train epochs
+_C.epochs = 1 # the train epochs
+_C.batch_size = 128
+#_C.total_tokens_processed = 327680000
+_C.total_tokens_processed = 40000000
+_C.save_per_step = 200

@@ -6,7 +6,7 @@ import regex as re
 from pretokenizer import pretokenizer
 from typing import BinaryIO
 from collections import defaultdict
-from logger import setup_logger
+from cs336_basics.helper import setup_logger
 from pdb import set_trace as T
 
 
