@@ -29,23 +29,23 @@ _C.d_ff = 1344
 _C.rope_theta=10000
 
 # optimizer
-_C.lr=1e-5
 _C.betas=(0.9,0.95)
 _C.weight_decay=0.01
 _C.eps = 1e-7
 _C.max_l2_norm = 1.0
 
 # scheduler
-_C.max_lr = 2e-5
-_C.min_lr = 1e-6
-_C.warmup_steps = 100
-_C.cosine_steps = 1000
+_C.max_lr = 5e-5
+_C.min_lr = 5e-6
+_C.warmup_steps = 200
+_C.cosine_steps = 1800
 
 # training setting
 _C.resume = ""
-_C.model_save_path = './result/train/gpt2_small_exp1'  # the model output dir
-_C.epochs = 1 # the train epochs
+_C.model_save_path = './result/train/gpt2_small_exp4'  # the model output dir
+_C.epochs = 3 # the train epochs
 _C.batch_size = 128
 #_C.total_tokens_processed = 327680000
 _C.total_tokens_processed = 40000000
-_C.save_per_step = 200
+_C.save_per_step = 500
+_C.log_per_step = 100

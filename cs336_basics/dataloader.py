@@ -3,6 +3,7 @@ import numpy as np
 import random
 import os
 from typing import BinaryIO, IO
+from pdb import set_trace as T
 
 
 def data_loading(x:np.array, 
@@ -29,9 +30,9 @@ def data_loading(x:np.array,
         X[i,:] = x[start:start+context_length]
         y[i,:] = x[start+1:start+1+context_length]
         i += 1
-    
-    X = torch.from_numpy(X).type(torch.uint8).to(device)
-    y = torch.from_numpy(y).type(torch.uint8).to(device)
+
+    X = torch.from_numpy(X).type(torch.long).to(device)
+    y = torch.from_numpy(y).type(torch.long).to(device)
 
     return (X, y)
 
@@ -62,8 +63,8 @@ def data_loading_sequence(
         i += 1
         start += context_length
     
-    X = torch.from_numpy(X).type(torch.uint8).to(device)
-    y = torch.from_numpy(y).type(torch.uint8).to(device)
+    X = torch.from_numpy(X).type(torch.int).to(device)
+    y = torch.from_numpy(y).type(torch.int).to(device)
 
     return (X, y)
 

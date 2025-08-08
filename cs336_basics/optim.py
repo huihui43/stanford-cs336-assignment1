@@ -1,4 +1,5 @@
 from collections.abc import Iterable 
+import time
 import math
 import torch
 from pdb import set_trace as T
@@ -20,8 +21,7 @@ def cross_entropy_loss(preds, targets):
     B = preds.shape[0]
     maxval = torch.max(preds, dim=1, keepdim=False).values 
     rows = [i for i in range(B)]
-    cols = [ele.item() for ele in targets]
-    res = torch.log(torch.sum(torch.exp(preds - maxval.unsqueeze(-1)), dim=1)) + maxval - preds[rows, cols]
+    res = torch.log(torch.sum(torch.exp(preds - maxval.unsqueeze(-1)), dim=1)) + maxval - preds[rows, targets]
     return torch.mean(res)
 
 # compute cross_entropy
@@ -38,11 +38,9 @@ def CELoss_and_Perplexity(preds, targets, context_length):
         Float[Tensor, ""]: The average cross-entropy loss across examples.
     """
     B = preds.shape[0]
-    bs = B // context_length
     maxval = torch.max(preds, dim=1, keepdim=False).values 
     rows = [i for i in range(B)]
-    cols = [ele.item() for ele in targets]
-    neg_log = torch.log(torch.sum(torch.exp(preds - maxval.unsqueeze(-1)), dim=1)) + maxval - preds[rows, cols]
+    neg_log = torch.log(torch.sum(torch.exp(preds - maxval.unsqueeze(-1)), dim=1)) + maxval - preds[rows, targets]
     celoss = torch.mean(neg_log)
     
     neg_log = neg_log.reshape(-1, context_length)
@@ -199,6 +197,7 @@ def gradient_clipping(params: Iterable[torch.nn.Parameter],
 
 if __name__ == '__main__':
 
+    '''
     weights = torch.nn.Parameter(5 * torch.randn((10,10)))
     #opt = SGD([weights], lr=1)
     opt = AdamW([weights], lr=1e-3, betas=(0.9, 0.999), weight_decay=0.01)
@@ -210,3 +209,13 @@ if __name__ == '__main__':
         loss.backward() # compute grad
         opt.step()
         T()
+    '''
+
+
+    preds = torch.rand(8,5)
+    targets = torch.tensor([1,0,2,2,4,1,4,0])
+    t1 = time.time()
+    for _ in range(100):
+        cross_entropy_loss(preds, targets)
+
+    print(f'use time {(time.time() - t1)/100}') 

@@ -130,6 +130,7 @@ class RotaryPositionalEmbedding(nn.Module):
         assert d_k % 2 == 0, "model dimension should be multiple of 2"
         self.theta = theta
         self.d_k = d_k
+        self.max_seq_len = max_seq_len
 
         num_blocks  = d_k // 2 # num of blocks
         multiplier = 1 / (theta ** (2/d_k))
@@ -168,7 +169,6 @@ class RotaryPositionalEmbedding(nn.Module):
         if len(token_positions.shape) > 1:
             token_positions = token_positions[0] # use the same token position for all batches
         '''
-
         cos_data_repeat = repeat(self.cos_data[token_positions],'seq_len block_num->seq_len (block_num 2)')
         sin_data_repeat = repeat(self.sin_data[token_positions],'seq_len block_num->seq_len (block_num 2)')
 

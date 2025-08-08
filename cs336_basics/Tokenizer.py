@@ -4,7 +4,7 @@ import os
 import json
 import sys
 sys.path.insert(0, "./tests/")
-from common import FIXTURES_PATH
+from common import FIXTURES_PATH 
 import tiktoken
 
 from collections.abc import Iterable
@@ -184,7 +184,7 @@ class Tokenizer:
         replace = b'\xf0'
         for id in ids:
             if id in self.vocab:
-                res += self.vocab[id] 
+                res += self.vocab[id]
             else:
                 res += replace
 

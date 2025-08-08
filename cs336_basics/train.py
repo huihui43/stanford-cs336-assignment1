@@ -37,21 +37,22 @@ def validate(model, valid_tokens, vocab_size, batch_size, context_length, device
     print("finish validating")
     return np.mean(valid_loss), np.mean(valid_perplexity)
 
-
+@profile
 def train(args):
 
     # start wandb
     run = wandb.init(
         project='cs336_assignment1',
         config={
-            "lr":args.lr,
+            "max_lr":args.max_lr,
+            "min_lr":args.min_lr,
             "architecture":args.model_name,
             "dataset":args.dataset_name,
             "epochs":args.epochs,
             "seed":args.seed,
+            "resume":args.resume,
         },
     )
-    table = wandb.Table(columns=["Time", "Epoch", "Iteration", "Loss"])
 
     # set seed
     torch.manual_seed(args.seed)
@@ -69,15 +70,22 @@ def train(args):
     model = Transformer_LM(args.vocab_size,args.context_length,args.d_model,
                            args.num_layers,args.num_heads,args.d_ff,
                            args.rope_theta, device=args.device, dtype=torch.float32)
-    optim = AdamW(model.parameters(), args.lr, args.betas, args.weight_decay, eps=args.eps)
+
+    model = torch.compile(model)
+    optim = AdamW(model.parameters(), 1e-3, args.betas, args.weight_decay, eps=args.eps)
     
     # send to device
     model.to(args.device)
     
     if len(args.resume):
         curr_iteration = load_checkpoint(args.resume, model, optim)
+        logger.info(f'resume from {args.resume}, curr step is {curr_iteration}')
+        model.train()
     else:
-        curr_iteration = -1
+        curr_iteration = 0
+
+    lr = cosine_annealing_scheduler(curr_iteration, args.max_lr, args.min_lr, args.warmup_steps, args.cosine_steps)
+    optim.set_lr(lr)
 
     # read input file
     all_train_tokens = np.load(args.train_text_path, mmap_mode='r') # 1d np array
@@ -89,31 +97,37 @@ def train(args):
     for i in range(args.epochs):
 
         epoch_loss = 0.
-        if i < curr_iteration: # skip
-            continue 
         for j in trange(num_batches):
+            
+            if global_step_cnt < curr_iteration: # skip
+                global_step_cnt += 1
+                continue 
+
             t1 = time.time()
             optim.zero_grad() 
             X, y = data_loading(all_train_tokens, args.batch_size, args.context_length, args.device)
-            y = y.view(-1)
             y_pred = model(X) # (B, l, vocab_size)
-            loss = cross_entropy_loss(y_pred.view(-1, args.vocab_size), y)
+            loss = cross_entropy_loss(y_pred.view(-1, args.vocab_size), y.view(-1))
             loss.backward() # compute gradient
             gradient_clipping(model.parameters(), args.max_l2_norm) # gradient clipping
-
-            optim.step()
-            global_step_cnt += 1
-
-            new_lr = cosine_annealing_scheduler(global_step_cnt, args.max_lr, args.min_lr, args.warmup_steps, args.cosine_steps)
-            optim.set_lr(new_lr)
-
+            optim.step() # update parameter
+            
             epoch_loss += loss.cpu().item()
-            run.log({"Avg loss per token": epoch_loss/(j+1), "lr":new_lr})
-            logger.info(f"Epoch: {i}/{args.epochs} | Step: {j}/{num_batches} | Time: {(time.time()-t1):.2f} | lr: {new_lr:.4e} | Average Loss (per token): {(epoch_loss / (j+1)):.4f}")
+
+            # logging
+            if global_step_cnt % args.log_per_step == 0:
+                run.log({"Avg loss per token": epoch_loss/(j+1), "lr":lr})
+                logger.info(f"Epoch: {i+1}/{args.epochs} | Step: {j+1}/{num_batches} | Time: {(time.time()-t1):.2f} | lr: {lr:.4e} | Average Loss (per token): {(epoch_loss / (j+1)):.4f}")
+            
+            # update lr 
+            global_step_cnt += 1
+            lr = cosine_annealing_scheduler(global_step_cnt, args.max_lr, args.min_lr, args.warmup_steps, args.cosine_steps)
+            optim.set_lr(lr)
 
             # save model
             if global_step_cnt % args.save_per_step == 0:
-                save_checkpoint(model, optim, i, os.path.join(args.model_save_path, f'ckpt_{global_step_cnt}.pkl'))
+                save_checkpoint(model, optim, global_step_cnt, os.path.join(args.model_save_path, f'ckpt_{global_step_cnt}.pkl'))
+
                 # validate
                 with torch.no_grad():
                     valid_loss, valid_perplexity = validate(model, all_valid_tokens,args.vocab_size,args.batch_size, args.context_length, args.device)
@@ -121,20 +135,18 @@ def train(args):
                     logger.info(f"Valid loss per token: {valid_loss}, Valid perplexity per sample: {valid_perplexity}")
 
 
-    # save final model
-    save_checkpoint(model, optim, i, os.path.join(args.model_save_path, f'ckpt_epoch_{i}.pkl'))
+        # save per epoch
+        save_checkpoint(model, optim, global_step_cnt, os.path.join(args.model_save_path, f'ckpt_{global_step_cnt}.pkl'))
 
 
 
-
-
+    wandb.finish()
 
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description="LLM Training")
     parser.add_argument("--exp", help="choose a experiment to do")
     args = parser.parse_args()
-    args.exp = 'gpt2_small'
 
     print('doing ', args.exp)
 
